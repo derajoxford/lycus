@@ -10,8 +10,10 @@ import motor.motor_asyncio
 import asyncio
 from discord.ext import commands
 import shutil
+
 intents = discord.Intents.default()
 intents.members = True
+
 load_dotenv()
 # REMEMEBR: cannot import a file which is also imported by cogs
 
@@ -19,52 +21,73 @@ load_dotenv()
 client = pymongo.MongoClient(os.getenv("pymongolink"))
 version = os.getenv("version")
 mongo = client[str(version)]
-async_client = motor.motor_asyncio.AsyncIOMotorClient(os.getenv("pymongolink"), serverSelectionTimeoutMS=5000)
+async_client = motor.motor_asyncio.AsyncIOMotorClient(
+    os.getenv("pymongolink"),
+    serverSelectionTimeoutMS=5000
+)
 async_mongo = async_client[str(version)]
 
 # async mongo autolycus
 db_client = pymongo.MongoClient(os.getenv("databaselink"))
 db_version = os.getenv("version")
-db_async_client = motor.motor_asyncio.AsyncIOMotorClient(os.getenv("databaselink"), serverSelectionTimeoutMS=5000)
+db_async_client = motor.motor_asyncio.AsyncIOMotorClient(
+    os.getenv("databaselink"),
+    serverSelectionTimeoutMS=5000
+)
 main_async_db = db_async_client["main"]
 dependent_async_db = db_async_client[str(db_version)]
 
 # envs
 api_key = os.getenv("api_key")
-channel_id = int(os.getenv("debug_channel"))
+channel_id = int(os.getenv("debug_channel", "0") or 0)
 
 # logger
-logging.basicConfig(filename="logs.log", filemode='a', format='%(levelname)s %(asctime)s.%(msecs)d %(name)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S', level=logging.INFO)
+logging.basicConfig(
+    filename="logs.log",
+    filemode="a",
+    format="%(levelname)s %(asctime)s.%(msecs)d %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    level=logging.INFO
+)
 logger = logging.getLogger()
 
 # pnwkit
 kit = pnwkit.QueryKit(api_key)
 
 # discord bot
-bot = commands.Bot(intents=intents, command_prefix="!")
+# disable auto sync so it doesn't throw 403 Missing Access on connect
+bot = commands.Bot(intents=intents, command_prefix="!", auto_sync_commands=False)
 
-# creating files if they do not exist and reseting them
-cwd = pathlib.Path.cwd()
 
-if os.path.exists(f"{cwd}/data/web"):
-    shutil.rmtree(f"{cwd}/data/web")
+def setup_files():
+    # creating files if they do not exist and reseting them
+    cwd = pathlib.Path.cwd()
 
-for make_directory in [
-    "data",
-    "data/web",
-    "data/web/builds", "data/web/damage", "data/web/raids", "data/web/attacksheet",
+    if os.path.exists(f"{cwd}/data/web"):
+        shutil.rmtree(f"{cwd}/data/web")
+
+    for make_directory in [
+        "data",
+        "data/web",
+        "data/web/builds",
+        "data/web/damage",
+        "data/web/raids",
+        "data/web/attacksheet",
     ]:
-    pathlib.Path(f"{cwd}/{make_directory}").mkdir(exist_ok=True)
+        pathlib.Path(f"{cwd}/{make_directory}").mkdir(exist_ok=True)
 
-for touch_file in [
-    "data/nations.json"
+    for touch_file in [
+        "data/nations.json"
     ]:
-    pathlib.Path(f"{cwd}/{touch_file}").touch(exist_ok=True)
+        pathlib.Path(f"{cwd}/{touch_file}").touch(exist_ok=True)
 
-# cogs
-for filename in os.listdir('./cogs'):
-    if filename.endswith('.py'):
-        bot.load_extension(f'cogs.{filename[:-3]}')
+
+def load_cogs():
+    # cogs
+    for filename in os.listdir("./cogs"):
+        if filename.endswith(".py"):
+            bot.load_extension(f"cogs.{filename[:-3]}")
+
 
 @bot.event
 async def on_ready():
@@ -76,8 +99,22 @@ async def on_ready():
         n -= 1
         logger.info(f"-> {guild.member_count} members || {guild} {extra}")
     logger.info(f"Slash commands are allowed in {n}/{len(bot.guilds)} guilds")
-    await bot.change_presence(status=discord.Status.online, activity=discord.Activity(type=discord.ActivityType.watching, name="Orbis"))
-    logger.info('We have logged in as {0.user}'.format(bot))
+
+    await bot.change_presence(
+        status=discord.Status.online,
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name="Orbis"
+        )
+    )
+    logger.info("We have logged in as {0.user}".format(bot))
+
+    # start web server task once the bot loop is live
+    if not getattr(bot, "_web_task_started", False):
+        from server import run
+        bot._web_task_started = True
+        bot.loop.create_task(run())
+
 
 @bot.event
 async def on_application_command(ctx: discord.ApplicationContext):
@@ -90,6 +127,7 @@ async def on_application_command(ctx: discord.ApplicationContext):
         except:
             channel = {"name": "Unknown", "id": None}
             # it might be a PartialMessageable
+
     try:
         guild = {"name": ctx.guild.name, "id": ctx.guild_id}
     except:
@@ -98,8 +136,15 @@ async def on_application_command(ctx: discord.ApplicationContext):
         except:
             guild = {"name": "Unknown", "id": None}
             # it might be a PartialMessageable
-            
-    await async_mongo.commands.insert_one({"command": ctx.command.name, "time": round(datetime.datetime.utcnow().timestamp()), "user": {"name": ctx.author.name, "id": ctx.author.id}, "channel": channel, "guild": guild})
+
+    await async_mongo.commands.insert_one({
+        "command": ctx.command.name,
+        "time": round(datetime.datetime.utcnow().timestamp()),
+        "user": {"name": ctx.author.name, "id": ctx.author.id},
+        "channel": channel,
+        "guild": guild
+    })
+
 
 @bot.event
 async def on_application_command_error(ctx: discord.ApplicationContext, error):
@@ -107,6 +152,7 @@ async def on_application_command_error(ctx: discord.ApplicationContext, error):
     logger.error(error)
     print(error)
     print(type(error))
+
     if "MissingPermissions" in str(error):
         await ctx.respond(error.original)
     elif "You are missing" in str(error) and "permission(s) to run this command" in str(error):
@@ -116,19 +162,41 @@ async def on_application_command_error(ctx: discord.ApplicationContext, error):
     elif "ValueError" in str(error) and str(ctx.command.full_parent_name) == "cost":
         await ctx.respond(error.original)
     elif "Unknown interaction" in str(error):
-        await ctx.respond(f"My bad <@{ctx.author.id}>! Discord claims I didn't respond fast enough, please try that again!")
-        await debug_channel.send(f'**Exception __caught__!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\nCommand: {ctx.command}\nType: {type(error)}\n\nError:```{error}```'[:2000])
+        await ctx.respond(
+            f"My bad <@{ctx.author.id}>! Discord claims I didn't respond fast enough, please try that again!"
+        )
+        if debug_channel:
+            await debug_channel.send(
+                f"**Exception __caught__!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\n"
+                f"Command: {ctx.command}\nType: {type(error)}\n\nError:```{error}```"[:2000]
+            )
     elif isinstance(error, (discord.HTTPException, discord.errors.NotFound)):
-        await debug_channel.send(f'**Exception __caught__!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\nCommand: {ctx.command}\nType: {type(error)}\n\nError:```{error}```'[:2000])
+        if debug_channel:
+            await debug_channel.send(
+                f"**Exception __caught__!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\n"
+                f"Command: {ctx.command}\nType: {type(error)}\n\nError:```{error}```"[:2000]
+            )
     else:
-        await ctx.send("Oh no! An unknown error occurred! Contact RandomNoobster#0093, and he might be able to help you out.")
-        await debug_channel.send(f'**Exception raised!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\nCommand: {ctx.command}\nType: {type(error)}\n\nError:```{error}```'[:2000])
+        await ctx.send(
+            "Oh no! An unknown error occurred! Contact RandomNoobster#0093, and he might be able to help you out."
+        )
+        if debug_channel:
+            await debug_channel.send(
+                f"**Exception raised!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\n"
+                f"Command: {ctx.command}\nType: {type(error)}\n\nError:```{error}```"[:2000]
+            )
+
 
 @bot.slash_command(name="ping", description="Pong!")
 async def ping(ctx: discord.ApplicationContext):
-    await ctx.respond(f'Pong! {round(bot.latency * 1000)}ms')
+    await ctx.respond(f"Pong! {round(bot.latency * 1000)}ms')
 
-from server import run
-asyncio.ensure_future(run())
 
-bot.run(os.getenv("bot_token"))
+def main():
+    setup_files()
+    load_cogs()
+    bot.run(os.getenv("bot_token"))
+
+
+if __name__ == "__main__":
+    main()
