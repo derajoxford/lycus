@@ -15,7 +15,7 @@ intents = discord.Intents.default()
 intents.members = True
 
 load_dotenv()
-# REMEMEBR: cannot import a file which is also imported by cogs
+# REMEMBER: cogs import main, so main MUST NOT start the bot on import.
 
 # async mongo fuquiem
 client = pymongo.MongoClient(os.getenv("pymongolink"))
@@ -39,14 +39,14 @@ dependent_async_db = db_async_client[str(db_version)]
 
 # envs
 api_key = os.getenv("api_key")
-channel_id = int(os.getenv("debug_channel", "0") or 0)
+channel_id = int(os.getenv("debug_channel"))
 
 # logger
 logging.basicConfig(
     filename="logs.log",
-    filemode="a",
-    format="%(levelname)s %(asctime)s.%(msecs)d %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+    filemode='a',
+    format='%(levelname)s %(asctime)s.%(msecs)d %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
     level=logging.INFO
 )
 logger = logging.getLogger()
@@ -55,12 +55,10 @@ logger = logging.getLogger()
 kit = pnwkit.QueryKit(api_key)
 
 # discord bot
-# disable auto sync so it doesn't throw 403 Missing Access on connect
-bot = commands.Bot(intents=intents, command_prefix="!", auto_sync_commands=False)
-
+bot = commands.Bot(intents=intents, command_prefix="!")
 
 def setup_files():
-    # creating files if they do not exist and reseting them
+    # creating files if they do not exist and resetting them
     cwd = pathlib.Path.cwd()
 
     if os.path.exists(f"{cwd}/data/web"):
@@ -69,10 +67,7 @@ def setup_files():
     for make_directory in [
         "data",
         "data/web",
-        "data/web/builds",
-        "data/web/damage",
-        "data/web/raids",
-        "data/web/attacksheet",
+        "data/web/builds", "data/web/damage", "data/web/raids", "data/web/attacksheet",
     ]:
         pathlib.Path(f"{cwd}/{make_directory}").mkdir(exist_ok=True)
 
@@ -81,12 +76,10 @@ def setup_files():
     ]:
         pathlib.Path(f"{cwd}/{touch_file}").touch(exist_ok=True)
 
-
 def load_cogs():
-    # cogs
-    for filename in os.listdir("./cogs"):
-        if filename.endswith(".py"):
-            bot.load_extension(f"cogs.{filename[:-3]}")
+    for filename in os.listdir('./cogs'):
+        if filename.endswith('.py'):
+            bot.load_extension(f'cogs.{filename[:-3]}')
 
 
 @bot.event
@@ -99,7 +92,6 @@ async def on_ready():
         n -= 1
         logger.info(f"-> {guild.member_count} members || {guild} {extra}")
     logger.info(f"Slash commands are allowed in {n}/{len(bot.guilds)} guilds")
-
     await bot.change_presence(
         status=discord.Status.online,
         activity=discord.Activity(
@@ -107,13 +99,7 @@ async def on_ready():
             name="Orbis"
         )
     )
-    logger.info("We have logged in as {0.user}".format(bot))
-
-    # start web server task once the bot loop is live
-    if not getattr(bot, "_web_task_started", False):
-        from server import run
-        bot._web_task_started = True
-        bot.loop.create_task(run())
+    logger.info('We have logged in as {0.user}'.format(bot))
 
 
 @bot.event
@@ -126,7 +112,6 @@ async def on_application_command(ctx: discord.ApplicationContext):
             channel = {"name": f"{ctx.author.name}'s DM's", "id": ctx.channel_id}
         except:
             channel = {"name": "Unknown", "id": None}
-            # it might be a PartialMessageable
 
     try:
         guild = {"name": ctx.guild.name, "id": ctx.guild_id}
@@ -135,7 +120,6 @@ async def on_application_command(ctx: discord.ApplicationContext):
             guild = {"name": f"{ctx.author.name}'s DM's", "id": None}
         except:
             guild = {"name": "Unknown", "id": None}
-            # it might be a PartialMessageable
 
     await async_mongo.commands.insert_one({
         "command": ctx.command.name,
@@ -165,36 +149,35 @@ async def on_application_command_error(ctx: discord.ApplicationContext, error):
         await ctx.respond(
             f"My bad <@{ctx.author.id}>! Discord claims I didn't respond fast enough, please try that again!"
         )
-        if debug_channel:
-            await debug_channel.send(
-                f"**Exception __caught__!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\n"
-                f"Command: {ctx.command}\nType: {type(error)}\n\nError:```{error}```"[:2000]
-            )
+        await debug_channel.send(
+            f'**Exception __caught__!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\n'
+            f'Command: {ctx.command}\nType: {type(error)}\n\nError:```{error}```'[:2000]
+        )
     elif isinstance(error, (discord.HTTPException, discord.errors.NotFound)):
-        if debug_channel:
-            await debug_channel.send(
-                f"**Exception __caught__!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\n"
-                f"Command: {ctx.command}\nType: {type(error)}\n\nError:```{error}```"[:2000]
-            )
+        await debug_channel.send(
+            f'**Exception __caught__!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\n'
+            f'Command: {ctx.command}\nType: {type(error)}\n\nError:```{error}```'[:2000]
+        )
     else:
         await ctx.send(
             "Oh no! An unknown error occurred! Contact RandomNoobster#0093, and he might be able to help you out."
         )
-        if debug_channel:
-            await debug_channel.send(
-                f"**Exception raised!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\n"
-                f"Command: {ctx.command}\nType: {type(error)}\n\nError:```{error}```"[:2000]
-            )
+        await debug_channel.send(
+            f'**Exception raised!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\n'
+            f'Command: {ctx.command}\nType: {type(error)}\n\nError:```{error}```'[:2000]
+        )
 
 
 @bot.slash_command(name="ping", description="Pong!")
 async def ping(ctx: discord.ApplicationContext):
-    await ctx.respond(f"Pong! {round(bot.latency * 1000)}ms')
+    await ctx.respond(f"Pong! {round(bot.latency * 1000)}ms")
 
 
 def main():
     setup_files()
     load_cogs()
+    from server import run
+    asyncio.ensure_future(run())
     bot.run(os.getenv("bot_token"))
 
 
