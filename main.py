@@ -13,36 +13,39 @@ import shutil
 
 intents = discord.Intents.default()
 intents.members = True
+
 load_dotenv()
 # REMEMEBR: cannot import a file which is also imported by cogs
 
-# async mongo fuquiem
-client = pymongo.MongoClient(os.getenv("pymongolink"))
+# ---- mongo wiring (never fall back to localhost) ----
+mongo_uri = os.getenv("pymongolink") or os.getenv("databaselink")
+if not mongo_uri:
+    raise RuntimeError("Missing pymongolink/databaselink")
+
 version = os.getenv("version")
+
+# async mongo fuquiem
+client = pymongo.MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
 mongo = client[str(version)]
+
 async_client = motor.motor_asyncio.AsyncIOMotorClient(
-    os.getenv("pymongolink"),
-    serverSelectionTimeoutMS=5000
+    mongo_uri, serverSelectionTimeoutMS=5000
 )
 async_mongo = async_client[str(version)]
 
 # async mongo autolycus
-db_client = pymongo.MongoClient(os.getenv("databaselink"))
-db_version = os.getenv("version")
+db_uri = os.getenv("databaselink") or mongo_uri
+db_client = pymongo.MongoClient(db_uri, serverSelectionTimeoutMS=5000)
 db_async_client = motor.motor_asyncio.AsyncIOMotorClient(
-    os.getenv("databaselink"),
-    serverSelectionTimeoutMS=5000
+    db_uri, serverSelectionTimeoutMS=5000
 )
 main_async_db = db_async_client["main"]
-dependent_async_db = db_async_client[str(db_version)]
+dependent_async_db = db_async_client[str(version)]
+# -----------------------------------------------
 
 # envs
 api_key = os.getenv("api_key")
 channel_id = int(os.getenv("debug_channel"))
-
-# OPTIONAL: only sync commands to ONE guild if you set this env var
-# leave unset to disable syncing completely (prevents 403 crash)
-sync_guild = os.getenv("sync_guild")
 
 # logger
 logging.basicConfig(
@@ -58,7 +61,7 @@ logger = logging.getLogger()
 kit = pnwkit.QueryKit(api_key)
 
 # discord bot
-# IMPORTANT: disable auto-sync on connect (this is what was crashing you)
+# auto_sync_commands=False prevents noisy 403 on connect for guilds bot can't access
 bot = commands.Bot(intents=intents, command_prefix="!", auto_sync_commands=False)
 
 # creating files if they do not exist and reseting them
@@ -93,16 +96,6 @@ async def on_ready():
         extra = ""
         n -= 1
         logger.info(f"-> {guild.member_count} members || {guild} {extra}")
-
-    # manual one-guild sync ONLY if sync_guild env is set
-    if sync_guild:
-        try:
-            gid = int(sync_guild)
-            await bot.sync_commands(guild_ids=[gid])
-            logger.info(f"Synced slash commands to guild {gid}")
-        except Exception as e:
-            logger.error(f"Slash sync failed for guild {sync_guild}: {e}")
-
     logger.info(f"Slash commands are allowed in {n}/{len(bot.guilds)} guilds")
     await bot.change_presence(
         status=discord.Status.online,
@@ -153,21 +146,22 @@ async def on_application_command_error(ctx: discord.ApplicationContext, error):
     elif "ValueError" in str(error) and str(ctx.command.full_parent_name) == "cost":
         await ctx.respond(error.original)
     elif "Unknown interaction" in str(error):
-        await ctx.respond(f"My bad <@{ctx.author.id}>! Discord claims I didn't respond fast enough, please try that again!")
+        await ctx.respond(
+            f"My bad <@{ctx.author.id}>! Discord claims I didn't respond fast enough, please try that again!"
+        )
         await debug_channel.send(
-            f'**Exception __caught__!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\n'
-            f'Command: {ctx.command}\nType: {type(error)}\n\nError:```{error}```'[:2000]
+            f'**Exception __caught__!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\nCommand: {ctx.command}\nType: {type(error)}\n\nError:```{error}```'[:2000]
         )
     elif isinstance(error, (discord.HTTPException, discord.errors.NotFound)):
         await debug_channel.send(
-            f'**Exception __caught__!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\n'
-            f'Command: {ctx.command}\nType: {type(error)}\n\nError:```{error}```'[:2000]
+            f'**Exception __caught__!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\nCommand: {ctx.command}\nType: {type(error)}\n\nError:```{error}```'[:2000]
         )
     else:
-        await ctx.send("Oh no! An unknown error occurred! Contact RandomNoobster#0093, and he might be able to help you out.")
+        await ctx.send(
+            "Oh no! An unknown error occurred! Contact RandomNoobster#0093, and he might be able to help you out."
+        )
         await debug_channel.send(
-            f'**Exception raised!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\n'
-            f'Command: {ctx.command}\nType: {type(error)}\n\nError:```{error}```'[:2000]
+            f'**Exception raised!**\nAuthor: {ctx.author}\nServer: {ctx.guild}\nCommand: {ctx.command}\nType: {type(error)}\n\nError:```{error}```'[:2000]
         )
 
 @bot.slash_command(name="ping", description="Pong!")
